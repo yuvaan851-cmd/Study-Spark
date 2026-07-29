@@ -9,19 +9,6 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Toolti
 import * as math from "mathjs";
 import { supabase } from "./lib/supabaseClient";
 
-/* ---------------------------------------------------------
-   StudySpark
-   Flashcards, Notes, Planner, and Quiz results are stored
-   per-user in Supabase (see supabase-schema.sql) with Row
-   Level Security, so every signed-in person only ever sees
-   their own data.
-
-   The AI Tutor and Essay Helper still run with simulated
-   local logic (templated text + mathjs for arithmetic) —
-   nothing there is sent anywhere. Wiring those to a real
-   LLM is a separate step (see README).
---------------------------------------------------------- */
-
 const SUBJECT_COLORS = {
   Math: "#E8A33D", Science: "#6B9080", English: "#C46A5E",
   History: "#7D8CA3", "Computer Science": "#8E6BAF",
@@ -111,7 +98,6 @@ function SansLabel({ children, theme, style }) {
   return <span style={{ fontFamily: "system-ui, sans-serif", color: theme.sub, ...style }}>{children}</span>;
 }
 
-/* ---------------- Sidebar ---------------- */
 function Sidebar({ tab, setTab, dark, setDark, theme, userEmail, onSignOut }) {
   return (
     <aside className="w-20 md:w-56 shrink-0 flex flex-col py-6 px-2 md:px-4" style={{ background: theme.panel, borderRight: `1px solid ${theme.border}` }}>
@@ -170,7 +156,6 @@ function Sidebar({ tab, setTab, dark, setDark, theme, userEmail, onSignOut }) {
   );
 }
 
-/* ---------------- Card shell ---------------- */
 function Card({ theme, children, accent, className = "", style = {} }) {
   return (
     <div
@@ -186,7 +171,6 @@ function Card({ theme, children, accent, className = "", style = {} }) {
   );
 }
 
-/* ---------------- Dashboard ---------------- */
 function Dashboard({ theme, userId }) {
   const [counts, setCounts] = useState({ flashcards: null, quizzes: null });
 
@@ -230,7 +214,6 @@ function Dashboard({ theme, userId }) {
   );
 }
 
-/* ---------------- AI Tutor ---------------- */
 function Tutor({ theme }) {
   const [difficulty, setDifficulty] = useState("High School");
   const [messages, setMessages] = useState([
@@ -254,7 +237,7 @@ function Tutor({ theme }) {
           "College": "Evaluating the expression step by step:",
         }[level];
         return `${levelIntro}\n\n"${question}"\n\nStep 1: Identify the operations involved.\nStep 2: Apply order of operations from left to right, handling parentheses first.\nStep 3: Simplify.\n\nResult: ${result}\n\nTry changing one number and see how the result shifts — that's the fastest way to build intuition.`;
-      } catch (e) { /* fall through to generic */ }
+      } catch (e) { }
     }
     const templates = {
       "Elementary": `Great question! Let's think about "${question}" in simple steps:\n\n1. What is the question really asking?\n2. What do we already know that can help?\n3. Let's try a small example first.\n4. Now let's put it together.\n\nWant to try step 1 together?`,
@@ -265,16 +248,32 @@ function Tutor({ theme }) {
     return templates[level];
   }
 
-  function send() {
+  async function send() {
     if (!input.trim()) return;
     const q = input.trim();
-    setMessages((m) => [...m, { role: "user", text: q }]);
+    const nextMessages = [...messages, { role: "user", text: q }];
+    setMessages(nextMessages);
     setInput("");
     setThinking(true);
-    setTimeout(() => {
+
+    try {
+      const res = await fetch("/api/tutor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: q,
+          level: difficulty,
+          history: nextMessages.slice(0, -1),
+        }),
+      });
+      if (!res.ok) throw new Error("Tutor API failed");
+      const data = await res.json();
+      setMessages((m) => [...m, { role: "ai", text: data.answer }]);
+    } catch (err) {
       setMessages((m) => [...m, { role: "ai", text: simulateAnswer(q, difficulty) }]);
+    } finally {
       setThinking(false);
-    }, 700);
+    }
   }
 
   return (
@@ -321,7 +320,6 @@ function Tutor({ theme }) {
   );
 }
 
-/* ---------------- Notes ---------------- */
 function Notes({ theme, userId }) {
   const [text, setText] = useState("");
   const [guide, setGuide] = useState(null);
@@ -408,7 +406,6 @@ function Notes({ theme, userId }) {
   );
 }
 
-/* ---------------- Flashcards ---------------- */
 function Flashcards({ theme, userId }) {
   const [deck, setDeck] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -513,7 +510,6 @@ function Flashcards({ theme, userId }) {
   );
 }
 
-/* ---------------- Quiz ---------------- */
 function Quiz({ theme, userId }) {
   const [subject, setSubject] = useState("Math");
   const [started, setStarted] = useState(false);
@@ -638,7 +634,6 @@ function Quiz({ theme, userId }) {
   );
 }
 
-/* ---------------- Planner ---------------- */
 function Planner({ theme, userId }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -731,7 +726,6 @@ function Planner({ theme, userId }) {
   );
 }
 
-/* ---------------- Pomodoro ---------------- */
 function Pomodoro({ theme }) {
   const [mode, setMode] = useState(25);
   const [secondsLeft, setSecondsLeft] = useState(25 * 60);
@@ -790,25 +784,43 @@ function Pomodoro({ theme }) {
   );
 }
 
-/* ---------------- Essay Helper ---------------- */
 function Essay({ theme }) {
   const [text, setText] = useState("");
   const [mode, setMode] = useState("grammar");
   const [output, setOutput] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function process() {
-    if (!text.trim()) return;
+  function localFallback() {
     if (mode === "grammar") {
       let fixed = text.replace(/\s+/g, " ").trim();
       fixed = fixed.replace(/(^|\.\s+)([a-z])/g, (m, p1, p2) => p1 + p2.toUpperCase());
       if (!/[.!?]$/.test(fixed)) fixed += ".";
-      setOutput(fixed);
+      return fixed;
     } else if (mode === "clarity") {
       const sentences = text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
-      setOutput(sentences.map((s) => s.length > 120 ? s.slice(0, 100) + "… [consider splitting this sentence]" : s).join(" "));
-    } else if (mode === "outline") {
+      return sentences.map((s) => s.length > 120 ? s.slice(0, 100) + "… [consider splitting this sentence]" : s).join(" ");
+    } else {
       const topic = text.trim().split(/[.!?]/)[0] || text.trim();
-      setOutput(`I. Introduction\n   — Introduce: ${topic}\n   — Thesis statement\n\nII. Body paragraph 1\n   — First supporting point\n\nIII. Body paragraph 2\n   — Second supporting point\n\nIV. Body paragraph 3\n   — Third supporting point / counterargument\n\nV. Conclusion\n   — Restate thesis, close with significance`);
+      return `I. Introduction\n   — Introduce: ${topic}\n   — Thesis statement\n\nII. Body paragraph 1\n   — First supporting point\n\nIII. Body paragraph 2\n   — Second supporting point\n\nIV. Body paragraph 3\n   — Third supporting point / counterargument\n\nV. Conclusion\n   — Restate thesis, close with significance`;
+    }
+  }
+
+  async function process() {
+    if (!text.trim()) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/essay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, mode }),
+      });
+      if (!res.ok) throw new Error("Essay API failed");
+      const data = await res.json();
+      setOutput(data.output);
+    } catch (err) {
+      setOutput(localFallback());
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -825,7 +837,7 @@ function Essay({ theme }) {
             <button key={id} onClick={() => setMode(id)} className="px-3 py-1.5 rounded-full text-sm"
               style={{ fontFamily: "system-ui, sans-serif", background: mode === id ? theme.accent : theme.panel2, color: mode === id ? "#14181F" : theme.ink }}>{label}</button>
           ))}
-          <button onClick={process} className="px-3 py-1.5 rounded-full text-sm flex items-center gap-1.5" style={{ fontFamily: "system-ui, sans-serif", border: `1px solid ${theme.border}` }}><Sparkles size={13} />Run</button>
+          <button onClick={process} disabled={loading} className="px-3 py-1.5 rounded-full text-sm flex items-center gap-1.5" style={{ fontFamily: "system-ui, sans-serif", border: `1px solid ${theme.border}` }}><Sparkles size={13} />{loading ? "Working…" : "Run"}</button>
         </div>
       </Card>
       {output && (
