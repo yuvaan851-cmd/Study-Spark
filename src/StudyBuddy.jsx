@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
-  BookOpen, MessageSquare, FileText, Layers, Clipboard, Calendar, Timer,
+  BookOpen, FileText, Layers, Clipboard, Calendar, Timer,
   PenTool, Sun, Moon, Flame, Clock, Trophy, Shuffle, RotateCcw, Check, X,
-  Plus, Play, Pause, RefreshCw, Send, Sparkles, ChevronRight, Star, Trash2,
+  Plus, Play, Pause, RefreshCw, Sparkles, ChevronRight, Star, Trash2,
   LogOut
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip } from "recharts";
-import * as math from "mathjs";
 import { supabase } from "./lib/supabaseClient";
 
 const SUBJECT_COLORS = {
@@ -16,7 +15,6 @@ const SUBJECT_COLORS = {
 
 const NAV = [
   { id: "dashboard", label: "Dashboard", icon: BookOpen },
-  { id: "tutor", label: "AI Tutor", icon: MessageSquare },
   { id: "notes", label: "Notes", icon: FileText },
   { id: "flashcards", label: "Flashcards", icon: Layers },
   { id: "quiz", label: "Quizzes", icon: Clipboard },
@@ -72,7 +70,6 @@ export default function StudyBuddyApp({ session }) {
         <div className="max-w-4xl mx-auto p-6 md:p-10">
           <InfoBanner theme={theme} />
           {tab === "dashboard" && <Dashboard theme={theme} userId={userId} />}
-          {tab === "tutor" && <Tutor theme={theme} />}
           {tab === "notes" && <Notes theme={theme} userId={userId} />}
           {tab === "flashcards" && <Flashcards theme={theme} userId={userId} />}
           {tab === "quiz" && <Quiz theme={theme} userId={userId} />}
@@ -210,112 +207,6 @@ function Dashboard({ theme, userId }) {
       <SansLabel theme={theme} style={{ fontSize: 12 }}>
         Study streak and time studied aren't tracked yet — quizzes and flashcards below are pulled live from your account.
       </SansLabel>
-    </div>
-  );
-}
-
-function Tutor({ theme }) {
-  const [difficulty, setDifficulty] = useState("High School");
-  const [messages, setMessages] = useState([
-    { role: "ai", text: "Hi! Ask me a homework question and I'll walk you through it step by step — I won't just hand you the answer." },
-  ]);
-  const [input, setInput] = useState("");
-  const [thinking, setThinking] = useState(false);
-  const endRef = useRef(null);
-
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, thinking]);
-
-  function simulateAnswer(question, level) {
-    const mathMatch = question.match(/^[\d\s+\-*/^().]+$/);
-    if (mathMatch) {
-      try {
-        const result = math.evaluate(question);
-        const levelIntro = {
-          "Elementary": "Let's solve this one piece at a time, like counting blocks:",
-          "Middle School": "Let's work through the order of operations:",
-          "High School": "Let's break this down using order of operations (PEMDAS):",
-          "College": "Evaluating the expression step by step:",
-        }[level];
-        return `${levelIntro}\n\n"${question}"\n\nStep 1: Identify the operations involved.\nStep 2: Apply order of operations from left to right, handling parentheses first.\nStep 3: Simplify.\n\nResult: ${result}\n\nTry changing one number and see how the result shifts — that's the fastest way to build intuition.`;
-      } catch (e) { }
-    }
-    const templates = {
-      "Elementary": `Great question! Let's think about "${question}" in simple steps:\n\n1. What is the question really asking?\n2. What do we already know that can help?\n3. Let's try a small example first.\n4. Now let's put it together.\n\nWant to try step 1 together?`,
-      "Middle School": `Let's tackle "${question}":\n\n1. Identify what's being asked and any key terms.\n2. Recall the rule or concept that applies here.\n3. Work through it one step at a time.\n4. Check your answer makes sense.\n\nWhich part would you like to start with?`,
-      "High School": `Here's a framework for "${question}":\n\n1. Identify the given information and what's unknown.\n2. Choose the relevant formula or concept.\n3. Work through the steps, showing your reasoning.\n4. Verify the answer against the original question.\n\nI'll guide you through each step rather than give the final answer outright — where do you want to start?`,
-      "College": `Approaching "${question}" rigorously:\n\n1. Define the problem precisely and state assumptions.\n2. Identify the relevant theory or method.\n3. Derive the solution, showing intermediate steps.\n4. Sanity-check the result and discuss edge cases.\n\nLet's start with your current understanding — what have you tried so far?`,
-    };
-    return templates[level];
-  }
-
-  async function send() {
-    if (!input.trim()) return;
-    const q = input.trim();
-    const nextMessages = [...messages, { role: "user", text: q }];
-    setMessages(nextMessages);
-    setInput("");
-    setThinking(true);
-
-    try {
-      const res = await fetch("/api/tutor", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question: q,
-          level: difficulty,
-          history: nextMessages.slice(0, -1),
-        }),
-      });
-      if (!res.ok) throw new Error("Tutor API failed");
-      const data = await res.json();
-      setMessages((m) => [...m, { role: "ai", text: data.answer }]);
-    } catch (err) {
-      setMessages((m) => [...m, { role: "ai", text: simulateAnswer(q, difficulty) }]);
-    } finally {
-      setThinking(false);
-    }
-  }
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-3xl">AI Tutor</h1>
-        <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)}
-          className="text-sm px-3 py-1.5 rounded-full outline-none"
-          style={{ fontFamily: "system-ui, sans-serif", background: theme.panel2, color: theme.ink, border: `1px solid ${theme.border}` }}>
-          {["Elementary", "Middle School", "High School", "College"].map((d) => <option key={d}>{d}</option>)}
-        </select>
-      </div>
-      <Card theme={theme} className="flex flex-col" style={{ height: 480 }}>
-        <div className="flex-1 overflow-y-auto space-y-3 pr-1">
-          {messages.map((m, i) => (
-            <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div className="px-4 py-2.5 rounded-2xl text-sm whitespace-pre-wrap"
-                style={{
-                  fontFamily: "system-ui, sans-serif",
-                  maxWidth: "80%",
-                  background: m.role === "user" ? theme.accent : theme.panel2,
-                  color: m.role === "user" ? "#14181F" : theme.ink,
-                  borderTopRightRadius: m.role === "user" ? 4 : 16,
-                  borderTopLeftRadius: m.role === "ai" ? 4 : 16,
-                }}>
-                {m.text}
-              </div>
-            </div>
-          ))}
-          {thinking && <div style={{ color: theme.sub, fontFamily: "system-ui, sans-serif" }} className="text-sm">thinking…</div>}
-          <div ref={endRef} />
-        </div>
-        <div className="flex gap-2 mt-3 pt-3" style={{ borderTop: `1px solid ${theme.border}` }}>
-          <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()}
-            placeholder="Ask a homework question…"
-            className="flex-1 px-3 py-2 rounded-full outline-none text-sm"
-            style={{ fontFamily: "system-ui, sans-serif", background: theme.panel2, color: theme.ink, border: `1px solid ${theme.border}` }} />
-          <button onClick={send} className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: theme.accent }}>
-            <Send size={16} color="#14181F" />
-          </button>
-        </div>
-      </Card>
     </div>
   );
 }
