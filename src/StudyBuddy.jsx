@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   BookOpen, FileText, Layers, Clipboard, Calendar, Timer,
-  PenTool, Sun, Moon, Flame, Clock, Trophy, Shuffle, RotateCcw, Check, X,
+  Sun, Moon, Flame, Clock, Trophy, Shuffle, RotateCcw, Check, X,
   Plus, Play, Pause, RefreshCw, Sparkles, ChevronRight, Star, Trash2,
   LogOut
 } from "lucide-react";
@@ -20,7 +20,6 @@ const NAV = [
   { id: "quiz", label: "Quizzes", icon: Clipboard },
   { id: "planner", label: "Planner", icon: Calendar },
   { id: "pomodoro", label: "Focus Timer", icon: Timer },
-  { id: "essay", label: "Essay Helper", icon: PenTool },
 ];
 
 const QUIZ_BANKS = {
@@ -75,7 +74,6 @@ export default function StudyBuddyApp({ session }) {
           {tab === "quiz" && <Quiz theme={theme} userId={userId} />}
           {tab === "planner" && <Planner theme={theme} userId={userId} />}
           {tab === "pomodoro" && <Pomodoro theme={theme} />}
-          {tab === "essay" && <Essay theme={theme} />}
         </div>
       </main>
     </div>
@@ -671,71 +669,6 @@ function Pomodoro({ theme }) {
         </div>
         <SansLabel theme={theme} style={{ fontSize: 13, marginTop: 20 }}>{sessions} session{sessions !== 1 ? "s" : ""} completed today · {(sessions * mode / 60).toFixed(1)} hrs focused</SansLabel>
       </div>
-    </div>
-  );
-}
-
-function Essay({ theme }) {
-  const [text, setText] = useState("");
-  const [mode, setMode] = useState("grammar");
-  const [output, setOutput] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  function localFallback() {
-    if (mode === "grammar") {
-      let fixed = text.replace(/\s+/g, " ").trim();
-      fixed = fixed.replace(/(^|\.\s+)([a-z])/g, (m, p1, p2) => p1 + p2.toUpperCase());
-      if (!/[.!?]$/.test(fixed)) fixed += ".";
-      return fixed;
-    } else if (mode === "clarity") {
-      const sentences = text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
-      return sentences.map((s) => s.length > 120 ? s.slice(0, 100) + "… [consider splitting this sentence]" : s).join(" ");
-    } else {
-      const topic = text.trim().split(/[.!?]/)[0] || text.trim();
-      return `I. Introduction\n   — Introduce: ${topic}\n   — Thesis statement\n\nII. Body paragraph 1\n   — First supporting point\n\nIII. Body paragraph 2\n   — Second supporting point\n\nIV. Body paragraph 3\n   — Third supporting point / counterargument\n\nV. Conclusion\n   — Restate thesis, close with significance`;
-    }
-  }
-
-  async function process() {
-    if (!text.trim()) return;
-    setLoading(true);
-    try {
-      const res = await fetch("/api/essay", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, mode }),
-      });
-      if (!res.ok) throw new Error("Essay API failed");
-      const data = await res.json();
-      setOutput(data.output);
-    } catch (err) {
-      setOutput(localFallback());
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <div>
-      <h1 className="text-3xl mb-1">Essay Helper</h1>
-      <SansLabel theme={theme}>Improve grammar and clarity, or generate an outline.</SansLabel>
-      <Card theme={theme} className="mt-5">
-        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={6} placeholder="Paste a paragraph or topic sentence…"
-          className="w-full rounded-xl p-3 text-sm outline-none resize-none"
-          style={{ fontFamily: "system-ui, sans-serif", background: theme.panel2, color: theme.ink, border: `1px solid ${theme.border}` }} />
-        <div className="flex flex-wrap gap-2 mt-3">
-          {[["grammar", "Fix grammar"], ["clarity", "Improve clarity"], ["outline", "Generate outline"]].map(([id, label]) => (
-            <button key={id} onClick={() => setMode(id)} className="px-3 py-1.5 rounded-full text-sm"
-              style={{ fontFamily: "system-ui, sans-serif", background: mode === id ? theme.accent : theme.panel2, color: mode === id ? "#14181F" : theme.ink }}>{label}</button>
-          ))}
-          <button onClick={process} disabled={loading} className="px-3 py-1.5 rounded-full text-sm flex items-center gap-1.5" style={{ fontFamily: "system-ui, sans-serif", border: `1px solid ${theme.border}` }}><Sparkles size={13} />{loading ? "Working…" : "Run"}</button>
-        </div>
-      </Card>
-      {output && (
-        <Card theme={theme} accent="#6B9080" className="mt-4">
-          <p className="text-sm whitespace-pre-wrap" style={{ fontFamily: "system-ui, sans-serif" }}>{output}</p>
-        </Card>
-      )}
     </div>
   );
 }
