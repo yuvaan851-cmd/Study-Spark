@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+  import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   BookOpen, FileText, Layers, Clipboard, Calendar, Timer,
   Sun, Moon, Flame, Clock, Trophy, Shuffle, RotateCcw, Check, X,
   Plus, Play, Pause, RefreshCw, Sparkles, ChevronRight, Star, Trash2,
-  LogOut
+  LogOut, Award, Lock
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip } from "recharts";
 import { supabase } from "./lib/supabaseClient";
@@ -49,6 +49,93 @@ const QUIZ_BANKS = {
   ],
 };
 
+const LEVELS = [
+  { name: "Bronze", minHours: 0, color: "#C08552" },
+  { name: "Silver", minHours: 1, color: "#B0B7BF" },
+  { name: "Gold", minHours: 3, color: "#E8B93D" },
+  { name: "Diamond", minHours: 5, color: "#6FD3E0" },
+  { name: "Titan", minHours: 7, color: "#8E6BAF" },
+  { name: "Olympian", minHours: 15, color: "#E85D5D" },
+];
+
+function getLevel(totalMinutes) {
+  const hours = totalMinutes / 60;
+  let idx = 0;
+  for (let i = 0; i < LEVELS.length; i++) {
+    if (hours >= LEVELS[i].minHours) idx = i;
+  }
+  const current = LEVELS[idx];
+  const next = LEVELS[idx + 1] || null;
+  const progress = next
+    ? Math.min(100, Math.max(0, ((hours - current.minHours) / (next.minHours - current.minHours)) * 100))
+    : 100;
+  return { ...current, next, hours, progress };
+}
+
+const BADGES = [
+  { id: "first_session", label: "First Steps", desc: "Complete your first focus session", check: (s) => s.totalMinutes > 0 },
+  { id: "silver", label: "Silver Scholar", desc: "Reach Silver (1+ hour studied)", check: (s) => s.totalMinutes / 60 >= 1 },
+  { id: "gold", label: "Gold Scholar", desc: "Reach Gold (3+ hours studied)", check: (s) => s.totalMinutes / 60 >= 3 },
+  { id: "diamond", label: "Diamond Scholar", desc: "Reach Diamond (5+ hours studied)", check: (s) => s.totalMinutes / 60 >= 5 },
+  { id: "titan", label: "Titan Scholar", desc: "Reach Titan (7+ hours studied)", check: (s) => s.totalMinutes / 60 >= 7 },
+  { id: "olympian", label: "Olympian", desc: "Reach Olympian (15+ hours studied)", check: (s) => s.totalMinutes / 60 >= 15 },
+  { id: "streak3", label: "3-Day Streak", desc: "Study 3 days in a row", check: (s) => s.longestStreak >= 3 },
+  { id: "streak7", label: "Week Warrior", desc: "Study 7 days in a row", check: (s) => s.longestStreak >= 7 },
+  { id: "streak30", label: "Unstoppable", desc: "Study 30 days in a row", check: (s) => s.longestStreak >= 30 },
+  { id: "flashcards10", label: "Flashcard Fledgling", desc: "Create 10 flashcards", check: (s) => s.flashcardCount >= 10 },
+  { id: "flashcards50", label: "Flashcard Master", desc: "Create 50 flashcards", check: (s) => s.flashcardCount >= 50 },
+  { id: "quiz5", label: "Quiz Taker", desc: "Complete 5 quizzes", check: (s) => s.quizCount >= 5 },
+  { id: "perfect", label: "Perfect Score", desc: "Score 100% on a quiz", check: (s) => s.hasPerfectScore },
+  { id: "planner5", label: "Planner Pro", desc: "Add 5 deadlines to your planner", check: (s) => s.plannerCount >= 5 },
+  { id: "notes1", label: "Note Taker", desc: "Generate your first study guide", check: (s) => s.hasNotes },
+];
+
+function localDateString(d) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+async function recordStudySession(userId, minutes) {
+  const today = new Date();
+  const todayStr = localDateString(today);
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = localDateString(yesterday);
+
+  const { data: existing } = await supabase
+    .from("profile_stats")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  let totalMinutes = minutes;
+  let currentStreak = 1;
+  let longestStreak = 1;
+
+  if (existing) {
+    totalMinutes = (existing.total_minutes || 0) + minutes;
+    if (existing.last_study_date === todayStr) {
+      currentStreak = existing.current_streak || 1;
+    } else if (existing.last_study_date === yesterdayStr) {
+      currentStreak = (existing.current_streak || 0) + 1;
+    } else {
+      currentStreak = 1;
+    }
+    longestStreak = Math.max(existing.longest_streak || 0, currentStreak);
+  }
+
+  await supabase.from("profile_stats").upsert({
+    user_id: userId,
+    total_minutes: totalMinutes,
+    current_streak: currentStreak,
+    longest_streak: longestStreak,
+    last_study_date: todayStr,
+    updated_at: new Date().toISOString(),
+  });
+}
+
 export default function StudyBuddyApp({ session }) {
   const [dark, setDark] = useState(true);
   const [tab, setTab] = useState("dashboard");
@@ -73,7 +160,7 @@ export default function StudyBuddyApp({ session }) {
           {tab === "flashcards" && <Flashcards theme={theme} userId={userId} />}
           {tab === "quiz" && <Quiz theme={theme} userId={userId} />}
           {tab === "planner" && <Planner theme={theme} userId={userId} />}
-          {tab === "pomodoro" && <Pomodoro theme={theme} />}
+          {tab === "pomodoro" && <Pomodoro theme={theme} userId={userId} />}
         </div>
       </main>
     </div>
@@ -167,34 +254,85 @@ function Card({ theme, children, accent, className = "", style = {} }) {
 }
 
 function Dashboard({ theme, userId }) {
-  const [counts, setCounts] = useState({ flashcards: null, quizzes: null });
+  const [stats, setStats] = useState(null);
 
   useEffect(() => {
     let active = true;
-    async function loadCounts() {
-      const [fc, qz] = await Promise.all([
+    async function loadAll() {
+      const [statsRes, fcRes, quizRes, plannerRes, notesRes] = await Promise.all([
+        supabase.from("profile_stats").select("*").eq("user_id", userId).maybeSingle(),
         supabase.from("flashcards").select("*", { count: "exact", head: true }).eq("user_id", userId),
-        supabase.from("quiz_results").select("*", { count: "exact", head: true }).eq("user_id", userId),
+        supabase.from("quiz_results").select("score,total").eq("user_id", userId),
+        supabase.from("planner_items").select("*", { count: "exact", head: true }).eq("user_id", userId),
+        supabase.from("notes").select("user_id").eq("user_id", userId).maybeSingle(),
       ]);
-      if (active) setCounts({ flashcards: fc.count ?? 0, quizzes: qz.count ?? 0 });
+      if (!active) return;
+      const quizRows = quizRes.data ?? [];
+      setStats({
+        totalMinutes: statsRes.data?.total_minutes ?? 0,
+        currentStreak: statsRes.data?.current_streak ?? 0,
+        longestStreak: statsRes.data?.longest_streak ?? 0,
+        flashcardCount: fcRes.count ?? 0,
+        quizCount: quizRows.length,
+        hasPerfectScore: quizRows.some((r) => r.total > 0 && r.score === r.total),
+        plannerCount: plannerRes.count ?? 0,
+        hasNotes: !!notesRes.data,
+      });
     }
-    loadCounts();
+    loadAll();
     return () => { active = false; };
   }, [userId]);
 
-  const stats = [
-    { label: "Study streak", value: "—", icon: Flame, accent: "#E8A33D" },
-    { label: "Time studied", value: "—", icon: Clock, accent: "#6B9080" },
-    { label: "Quizzes done", value: counts.quizzes ?? "…", icon: Trophy, accent: "#C46A5E" },
-    { label: "Flashcards made", value: counts.flashcards ?? "…", icon: Layers, accent: "#7D8CA3" },
+  if (!stats) {
+    return (
+      <div>
+        <h1 className="text-3xl mb-1">Welcome back</h1>
+        <SansLabel theme={theme}>Loading your progress…</SansLabel>
+      </div>
+    );
+  }
+
+  const level = getLevel(stats.totalMinutes);
+  const hoursStudied = (stats.totalMinutes / 60).toFixed(1);
+
+  const summaryCards = [
+    { label: "Current streak", value: `${stats.currentStreak} day${stats.currentStreak !== 1 ? "s" : ""}`, icon: Flame, accent: "#E8A33D" },
+    { label: "Hours studied", value: `${hoursStudied} hrs`, icon: Clock, accent: "#6B9080" },
+    { label: "Quizzes done", value: stats.quizCount, icon: Trophy, accent: "#C46A5E" },
+    { label: "Flashcards made", value: stats.flashcardCount, icon: Layers, accent: "#7D8CA3" },
   ];
+
   return (
     <div>
       <h1 className="text-3xl mb-1">Welcome back</h1>
       <SansLabel theme={theme}>Here's where things stand.</SansLabel>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 mb-6">
-        {stats.map((s) => (
+      <Card theme={theme} accent={level.color} className="mt-6">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-full flex items-center justify-center shrink-0" style={{ background: level.color }}>
+              <Award size={20} color="#14181F" />
+            </div>
+            <div>
+              <div className="text-2xl" style={{ color: level.color }}>{level.name}</div>
+              <SansLabel theme={theme} style={{ fontSize: 12 }}>{hoursStudied} hours studied all-time · longest streak {stats.longestStreak} day{stats.longestStreak !== 1 ? "s" : ""}</SansLabel>
+            </div>
+          </div>
+        </div>
+        <div className="mt-4">
+          <div className="w-full h-2.5 rounded-full overflow-hidden" style={{ background: theme.panel2 }}>
+            <div className="h-full rounded-full transition-all" style={{ width: `${level.progress}%`, background: level.color }} />
+          </div>
+          <SansLabel theme={theme} style={{ fontSize: 11, marginTop: 6 }}>
+            {level.next
+              ? `${(level.next.minHours - level.hours).toFixed(1)} hrs to ${level.next.name}`
+              : "Top level reached — Olympian!"}
+          </SansLabel>
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 mb-6">
+        {summaryCards.map((s) => (
           <Card key={s.label} theme={theme} accent={s.accent}>
             <s.icon size={18} color={s.accent} />
             <div className="text-2xl mt-2">{s.value}</div>
@@ -202,9 +340,22 @@ function Dashboard({ theme, userId }) {
           </Card>
         ))}
       </div>
-      <SansLabel theme={theme} style={{ fontSize: 12 }}>
-        Study streak and time studied aren't tracked yet — quizzes and flashcards below are pulled live from your account.
-      </SansLabel>
+
+      <SansLabel theme={theme} style={{ fontSize: 13, fontWeight: 600, color: theme.ink, display: "block", marginBottom: 10 }}>Badges</SansLabel>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        {BADGES.map((b) => {
+          const earned = b.check(stats);
+          return (
+            <Card key={b.id} theme={theme} accent={earned ? theme.accent : undefined} style={{ opacity: earned ? 1 : 0.5 }}>
+              <div className="flex items-center gap-2">
+                {earned ? <Award size={16} color={theme.accent} /> : <Lock size={16} color={theme.sub} />}
+                <span className="text-sm" style={{ fontWeight: 600 }}>{b.label}</span>
+              </div>
+              <SansLabel theme={theme} style={{ fontSize: 11, marginTop: 4 }}>{b.desc}</SansLabel>
+            </Card>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -615,13 +766,16 @@ function Planner({ theme, userId }) {
   );
 }
 
-function Pomodoro({ theme }) {
+function Pomodoro({ theme, userId }) {
   const [mode, setMode] = useState(25);
   const [secondsLeft, setSecondsLeft] = useState(25 * 60);
   const [running, setRunning] = useState(false);
   const [sessions, setSessions] = useState(0);
   const [custom, setCustom] = useState(25);
   const intervalRef = useRef(null);
+  const prevSessions = useRef(0);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
 
   useEffect(() => {
     if (running) {
@@ -639,6 +793,13 @@ function Pomodoro({ theme }) {
     }
     return () => clearInterval(intervalRef.current);
   }, [running]);
+
+  useEffect(() => {
+    if (sessions > prevSessions.current && userId) {
+      recordStudySession(userId, modeRef.current);
+    }
+    prevSessions.current = sessions;
+  }, [sessions, userId]);
 
   function setLength(mins) { setMode(mins); setSecondsLeft(mins * 60); setRunning(false); }
   const mm = String(Math.floor(secondsLeft / 60)).padStart(2, "0");
